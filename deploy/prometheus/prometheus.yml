@@ -1,0 +1,34 @@
+# Prometheus configuration for SCP:SL Server Health Monitor
+# Place alongside prometheus.yml or add scrape_config to existing setup
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'scpsl-monitor'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: 'scpsl-monitor'
+    static_configs:
+      - targets: ['127.0.0.1:8080']
+        labels:
+          server: 'scpsl-primary'
+
+    metrics_path: /metrics
+    scheme: http
+
+    # Basic auth if enabled on agent
+    # basic_auth:
+    #   username: admin
+    #   password: yourpassword
+
+    scrape_interval: 5s
+    scrape_timeout: 4s

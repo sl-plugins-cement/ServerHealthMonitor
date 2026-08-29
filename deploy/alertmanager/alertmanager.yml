@@ -1,0 +1,79 @@
+# Alertmanager configuration for SCP:SL Server Health Monitor
+# Reference: Prometheus Alertmanager best practices
+# - Grouping: batch related alerts to reduce noise
+# - Inhibition: suppress downstream alerts when root cause is firing
+# - Silences: planned maintenance windows
+#
+# Deploy alongside prometheus in docker-compose.yml.
+
+global:
+  resolve_timeout: 5m
+  # SMTP settings (optional — configure for email notifications)
+  # smtp_smarthost: 'smtp.example.com:587'
+  # smtp_from: 'monitor@example.com'
+  # smtp_auth_username: 'monitor@example.com'
+  # smtp_auth_password: '<password>'
+
+# The root route: all alerts enter here.
+route:
+  group_by: ['alertname', 'severity', 'instance']
+  group_wait: 30s       # wait 30s for more alerts in the same group
+  group_interval: 5m    # re-notify after 5m if new alerts join the group
+  repeat_interval: 4h   # don't repeat the same alert more than every 4h
+  receiver: 'default'
+
+  # Critical alerts go to a high-priority receiver with shorter repeat.
+  routes:
+    - matchers:
+        - severity = critical
+      receiver: 'critical'
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+# Inhibition rules: suppress downstream alerts when the root cause is firing.
+# Reference: "Alarm reduction and root cause inference based on association
+# mining" (Frontiers in Computer Science, 2023) — removes 62% redundant alerts.
+inhibit_rules:
+  # If the whole host is down, don't also alert on every service on it.
+  - source_matchers:
+      - alertname = HostDown
+      - severity = critical
+    target_matchers:
+      - severity = warning
+    equal: ['instance']
+
+  # If the agent itself is unreachable, don't alert on stale metrics.
+  - source_matchers:
+      - alertname = AgentDown
+      - severity = critical
+    target_matchers:
+      - alertname = HighCPUUsage
+      - alertname = HighMemoryUsage
+      - alertname = HighDiskUsage
+    equal: ['instance']
+
+# Receivers: where alerts are sent.
+receivers:
+  - name: 'default'
+    # Webhook receiver (Discord/Slack compatible)
+    webhook_configs:
+      - url: 'http://127.0.0.1:8080/api/alertmanager-webhook'
+        send_resolved: true
+    # Uncomment to enable email:
+    # email_configs:
+    #   - to: 'ops@example.com'
+    #     send_resolved: true
+
+  - name: 'critical'
+    webhook_configs:
+      - url: 'http://127.0.0.1:8080/api/alertmanager-webhook'
+        send_resolved: true
+    # Critical alerts also go to email / pager:
+    # email_configs:
+    #   - to: 'oncall@example.com'
+    #     send_resolved: true
+
+# Templates: custom notification formatting (optional).
+# templates:
+#   - '/etc/alertmanager/templates/*.tmpl'

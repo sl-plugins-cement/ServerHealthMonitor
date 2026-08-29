@@ -1,0 +1,47 @@
+groups:
+  - name: scpsl_monitor_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: scpsl_cpu_percent > 90
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 使用率过高 ({{ $value | printf \"%.1f\" }}%)"
+          description: "服务器 {{ $labels.instance }} CPU 使用率已超过 90% 持续 2 分钟"
+
+      - alert: HighMemoryUsage
+        expr: scpsl_memory_percent > 90
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内存使用率过高 ({{ $value | printf \"%.1f\" }}%)"
+          description: "服务器 {{ $labels.instance }} 内存使用率已超过 90% 持续 2 分钟"
+
+      - alert: HighDiskUsage
+        expr: scpsl_disk_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘使用率过高 ({{ $value | printf \"%.1f\" }}%)"
+          description: "服务器 {{ $labels.instance }} 磁盘使用率已超过 85% 持续 5 分钟"
+
+      - alert: SCPSLInstanceDown
+        expr: scpsl_instance_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "SCP:SL 实例下线 - {{ $labels.service }}"
+          description: "服务 {{ $labels.service }} (端口 {{ $labels.port }}) 已停止运行"
+
+      - alert: AgentDown
+        expr: up{job="scpsl-monitor"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "监控 Agent 离线"
+          description: "无法连接到监控 Agent，服务器可能已宕机"

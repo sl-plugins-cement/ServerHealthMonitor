@@ -1,0 +1,48 @@
+[Unit]
+Description=Server Health Monitor Agent (Go)
+Documentation=https://github.com/Oxen112774/ServerHealthMonitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/server-health-monitor-agent --config /etc/server-health-monitor-agent.conf
+ExecReload=/bin/kill -HUP $MAINPID
+User=root
+Group=root
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitInterval=60
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+MemoryDenyWriteExecute=true
+
+# Config file access
+ReadWritePaths=/etc/server-health-monitor-agent.conf
+
+# Resource limits
+MemoryMax=256M
+CPUWeight=20
+TasksMax=128
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-health-monitor-agent
+
+[Install]
+WantedBy=multi-user.target

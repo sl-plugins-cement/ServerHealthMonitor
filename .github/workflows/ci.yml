@@ -1,0 +1,102 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.23'
+  BINARY_NAME: 'server-health-monitor-agent'
+
+jobs:
+  # ---------- Build Go binary ----------
+  build:
+    name: Build Go Agent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build (linux/amd64)
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-s -w -X main.version=${{ github.sha }} -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o build/${{ env.BINARY_NAME }} \
+            ./cmd/agent
+
+      - name: Verify binary
+        run: |
+          file build/${{ env.BINARY_NAME }}
+          ls -lh build/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-health-monitor-agent
+          path: build/${{ env.BINARY_NAME }}
+          retention-days: 30
+
+  # ---------- Deploy to server ----------
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: server-health-monitor-agent
+          path: build/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deploy dependencies
+        run: |
+          pip install paramiko scp
+
+      - name: Deploy via Python script
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: |
+          chmod +x build/${{ env.BINARY_NAME }}
+          python deploy/deploy.py \
+            --host "$DEPLOY_HOST" \
+            --port "$DEPLOY_PORT" \
+            --user "$DEPLOY_USER" \
+            --key "$DEPLOY_KEY" \
+            --binary "build/${{ env.BINARY_NAME }}"
+
+      - name: Verify deployment
+        run: |
+          echo "Deployment completed. Verify at http://${{ secrets.DEPLOY_HOST }}:8080/"

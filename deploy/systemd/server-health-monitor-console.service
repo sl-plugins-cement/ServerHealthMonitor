@@ -1,0 +1,27 @@
+[Unit]
+Description=Server Health Monitor Console (Management Dashboard)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/server-health-monitor
+ExecStart=/opt/server-health-monitor/server-health-monitor-console \
+    --host 0.0.0.0 \
+    --port 8081 \
+    --data /var/lib/server-health-monitor-console-data
+
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/server-health-monitor-console-data /opt/server-health-monitor
+MemoryMax=256M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
