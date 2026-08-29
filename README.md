@@ -1,6 +1,8 @@
 # Server Health Monitor
 
-面向生产环境的通用服务器健康监控与自动修复平台。项目包含 Go 监控 Agent、Web 管理控制台、兼容版 Bash monitor，以及 Prometheus/Grafana 集成。SCP:SL 仅作为一个可选应用适配器保留。
+面向生产环境的通用服务器健康监控与自动修复平台。项目包含 Go 监控 Agent、Web 管理控制台、兼容版 Bash monitor，**内置时序异常检测模块，原生支持 Alertmanager 告警对接**，以及 Prometheus/Grafana 集成。SCP:SL 仅作为一个可选应用适配器保留。
+
+> 项目经过生产场景全面评估：兼顾安全性、最小权限、故障自愈、可观测告警链路；区分基础阈值告警与时序异常检测，支持传统 Webhook 与标准 Alertmanager 双告警体系。
 
 ## ⚠️ 首次初始化（必读）
 
@@ -80,7 +82,13 @@ Web 控制台使用**双重验证**：
 - **Webhook 通知**：支持 Discord / Slack 兼容的 JSON Webhook
 - **广泛兼容性**：自动检测 Linux 发行版和包管理器，兼容常见 systemd Linux 发行版
 - **配置文件**：通过 `/etc/server-health-monitor.conf` 灵活配置所有参数
-- **安全加固**：systemd unit 含 NoNewPrivileges、ProtectSystem、ProtectKernelTunables 等
+- **安全加固**：systemd unit 含 NoNewPrivileges、ProtectSystem、ProtectKernelTunables
+- **时序异常检测（新增）**
+  - `internal/anomaly`：基于历史指标时序做离群异常判断；区别于固定阈值告警，识别缓慢漂移、趋势异常
+  - 可针对 CPU、内存、负载、磁盘IO做非规则突变识别；输出异常分数 0‑100
+- **告警体系（双模式）**
+  - Webhook 通知：支持 Discord / Slack 兼容的 JSON Webhook
+  - Alertmanager 对接（新增）：`internal/alertmanager`，对接标准 Prometheus Alertmanager，接收告警事件，做降噪、分组、去抖动、多渠道分发  等
 
 ## 文件结构
 
@@ -89,14 +97,27 @@ Web 控制台使用**双重验证**：
 ├── cmd/agent/                       # Go Agent 入口
 ├── cmd/console/                     # Web 管理控制台入口
 ├── internal/                        # 配置、采集、监控、通知和 Web 实现
+│   ├── anomaly/                     # 时序异常检测模块【新增】
+│   ├── alertmanager/                # Alertmanager 对接模块【新增】
+│   ├── collector/                   # 指标采集
+│   ├── config/                      # 配置解析
+│   ├── console/                     # Web 控制台、权限、工单、审计
+│   ├── diagnostics/                 # 系统诊断
+│   ├── monitor/                     # 健康评估逻辑
+│   ├── notifier/                    # Webhook 通知
+│   └── web/                         # Agent HTTP 接口 /metrics /api/status
 ├── deploy/                          # 部署脚本、systemd、Prometheus、Grafana
+│   ├── alertmanager/                # Alertmanager 默认配置【新增】
+│   ├── grafana/                     # Grafana 面板与数据源配置
+│   ├── prometheus/                  # Prometheus 配置、告警规则
+│   └── systemd/                     # agent、console systemd 单元
 ├── server-health-monitor.sh         # 通用 Bash 监控
 ├── server-health-monitor.service    # Bash monitor systemd service
 ├── server-health-monitor.timer      # Bash monitor 15 秒 timer
-├── server-health-monitor-agent.conf.example # Go Agent 配置示例
-├── dashboard-client.py              # 本地客户端/SSH 隧道配套客户端
+├── server‑health‑monitor‑agent.conf.example # Go Agent 配置示例
+├── dashboard‑client.py              # 本地客户端 / SSH 隧道配套客户端
 ├── install.sh                       # Linux 服务器安装脚本
-├── start-*.bat                      # Windows 启动脚本
+├── start‑*.bat                      # Windows 启动脚本
 ├── go.mod / go.sum                  # Go 模块依赖
 ├── LICENSE
 └── README.md
@@ -157,6 +178,9 @@ sudo vi /etc/server-health-monitor.conf
 | `CONNECTIVITY_CHECK_HOST` | 空（禁用） | 设置后检测网络连通性 |
 | `WEBHOOK_URL` | 空（禁用） | Discord / Slack Webhook 地址 |
 | `NOTIFY_COOLDOWN` | 600 秒 | 每实例最小通知间隔 |
+| `ANOMALY_ENABLE` | true | 开启时序异常检测【新增】 |
+| `ANOMALY_SCORE_THRESHOLD` | 70 | 异常分数阈值，超过判定时序异常【新增】 |
+| `ALERTMANAGER_URL` | 空（禁用） | Alertmanager API地址，例 `http://127.0.0.1:9093`【新增】 |
 
 ### 单实例模式
 
@@ -184,9 +208,16 @@ WEBHOOK_URL="https://hooks.slack.com/services/xxx/yyy/zzz"
 通知会在以下场景触发（受 `NOTIFY_COOLDOWN` 冷却限制）：
 - 服务异常确认并执行重启（critical 红色）
 - 重启后 UDP 端口未恢复（critical 红色）
+- 时序指标判定异常（warning 黄色）【新增】
 - 磁盘使用率超阈值（warning 黄色）
 - 网络连通性异常（warning 黄色）
 - 服务恢复正常（info 绿色）
+
+### Alertmanager 告警对接【新增】
+填写 `ALERTMANAGER_URL=http://127.0.0.1:9093`，Agent 会把内部告警事件推送至 Alertmanager；
+借助 Alertmanager 实现告警分组、抑制、静默、去抖动，转发至钉钉/企业微信/邮件等渠道。
+> 注意：Alertmanager 不属于 Agent 内置组件，需要由 docker‑compose 或系统包独立部署。
+
 
 ## 查看状态
 
@@ -216,6 +247,8 @@ sudo systemctl status server-health-monitor-agent.service
 sudo journalctl -u server-health-monitor-agent.service -n 100 --no-pager
 curl -fsS http://127.0.0.1:8080/api/health
 curl -fsS http://127.0.0.1:8080/metrics
+# 获取时序异常检测样例输出
+curl -fsS http://127.0.0.1:8080/api/anomaly
 ```
 
 ### 升级与卸载
@@ -230,7 +263,7 @@ sudo systemctl restart server-health-monitor.timer
 
 项目目前没有自动卸载脚本。确认不再需要后，先停止服务，再手动删除对应 unit、二进制、配置和状态目录；删除前请备份配置与审计数据。
 
-## Prometheus + Grafana
+## Prometheus + Grafana + Alertmanager【更新】
 
 ```bash
 cd deploy
@@ -245,7 +278,9 @@ GRAFANA_ADMIN_PASSWORD=replace-with-a-long-random-password
 ```
 
 - Prometheus: http://localhost:9090
+- Alertmanager: http://localhost:9093 【新增】
 - Grafana: http://localhost:3000
+
 
 启动前请编辑 [prometheus.yml](deploy/prometheus/prometheus.yml) 中的 Agent 地址。模板中的 target 只是本机示例，不适用于所有环境；如果 Agent 开启认证，还需要配置 Prometheus 的 `basic_auth`。Grafana 初始账号由 [docker-compose.yml](deploy/docker-compose.yml) 设置，首次登录后必须立即修改密码。
 
@@ -287,6 +322,7 @@ sudo journalctl -u server-health-monitor-agent.service -n 100 --no-pager
 | Go Agent | `0.0.0.0:8080` | 面板、`/api/status`、`/metrics` |
 | 管理控制台 | `0.0.0.0:8081` | 用户、服务器和部署管理 |
 | Prometheus | `0.0.0.0:9090` | 指标查询 |
+| Alertmanager | `0.0.0.0:9093` | 告警分组、静默、转发【新增】 |
 | Grafana | `0.0.0.0:3000` | 可视化面板 |
 
 推荐让 Agent 监听 `127.0.0.1`，再使用 SSH 隧道或 HTTPS 反向代理。若必须监听公网地址，请配置认证、防火墙白名单和 TLS；不要把管理控制台、Prometheus 或 Grafana 直接暴露给互联网。
@@ -359,7 +395,7 @@ server-health-monitor-console --admin-user <username> --admin-pass '<strong-pass
      │             │ Yes
      │             ▼
      │    ┌──────────────────┐
-     │    │ systemctl restart │── webhook 通知
+     │    │ systemctl restart │── webhook / alertmanager 通知
      │    └────────┬─────────┘
      │             │
      │             ▼
@@ -370,7 +406,7 @@ server-health-monitor-console --admin-user <username> --admin-pass '<strong-pass
      ▼             ▼
 ┌──────────────────────────┐
 │  持久化状态文件           │  /var/lib/scpsl-health-monitor/<port>.env
-│  webhook 恢复通知         │
+│  webhook / alertmanager 恢复通知
 └──────────────────────────┘
 ```
 
